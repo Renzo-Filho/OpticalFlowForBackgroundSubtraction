@@ -255,12 +255,17 @@ def effect_fluid_paint_bg_only(frame_bgr, prev_gray, gray, state):
     """
     h, w = gray.shape
 
-    # Precisa de modelo de background
-    if state.get("bg_base") is None:
+    # If we calculated a mask in main (Flow or Static), use it!
+    if "active_mask" in state and state["active_mask"] is not None:
+        # The mask in state is typically 0 or 255
+        fg_mask_0_255 = state["active_mask"]
+    
+    # Fallback to old behavior (Static BG) if no active mask found
+    elif state.get("bg_base") is not None:
+        fg_mask_0_255 = make_foreground_mask(frame_bgr, state["bg_base"])
+    else:
+        # If we have neither, we can't do the effect
         return frame_bgr
-
-    # 1) Máscara FG (0..255)
-    fg_mask_0_255 = make_foreground_mask(frame_bgr, state["bg_base"])
 
     # 2) Converte para [0,1] e 3 canais
     fg = (fg_mask_0_255.astype(np.float32) / 255.0)   # (H,W)
@@ -469,11 +474,92 @@ def show_mask_effect(frame_bgr, state):
     # Converte para 3 canais para o cv2.imshow
     return cv2.cvtColor(mask_0_255, cv2.COLOR_GRAY2BGR)
 
+
+def overlay_mask_debug(frame, mask_u8):
+    """
+    Visualizes the mask in the corner of the screen for comparison.
+    """
+    h, w = frame.shape[:2]
+    small_h, small_w = h // 4, w // 4
+    
+    # Create red overlay for the mask
+    mask_small = cv2.resize(mask_u8, (small_w, small_h))
+    mask_color = cv2.cvtColor(mask_small, cv2.COLOR_GRAY2BGR)
+    mask_color[..., 0] = 0 # Remove Blue
+    mask_color[..., 1] = 0 # Remove Green
+    # Result is Red channel only
+
+    # Overlay on bottom-right
+    frame[h-small_h:h, w-small_w:w] = mask_color
+    cv2.rectangle(frame, (w-small_w, h-small_h), (w, h), (255, 255, 255), 1)
+
 # =========================
-# Lógica Principal
+# Background Subtraction via Optical Flow
 # =========================
+
+def make_mask_from_flow_simple(flow, threshold=2.0):
+    """
+    PHASE 1: Generates a foreground mask based purely on instantaneous motion.
+    Pros: Doesn't need a static background model.
+    Cons: The person disappears if they stop moving (The 'Statue' problem).
+    """
+    # 1. Calculate Magnitude of the flow vectors
+    mag, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+    
+    # 2. Thresholding (Motion > Threshold = Foreground)
+    _, mask = cv2.threshold(mag, threshold, 255, cv2.THRESH_BINARY)
+    mask = mask.astype(np.uint8)
+
+    # 3. Morphology (Clean up noise and fill holes)
+    # Using the same kernel size as your static method for fair comparison
+    kernel_size = 21 
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    
+    # Remove small noise dots
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    # Fill small holes inside the moving object
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    # Dilate slightly to ensure coverage
+    mask = cv2.dilate(mask, kernel, iterations=1)
+
+    return mask
+
+def make_mask_from_flow_robust(flow, state, threshold=2.0, decay=0.90):
+    """
+    Method B: Generates mask based on MOTION (Optical Flow).
+    Uses 'decay' to keep the mask active for a short time after motion stops.
+    """
+    h, w = flow.shape[:2]
+    
+    # === FIX START ===
+    # We must check if it is None BEFORE we check for .shape
+    if state.get("flow_acc") is None or state["flow_acc"].shape != (h, w):
+        state["flow_acc"] = np.zeros((h, w), dtype=np.float32)
+    # === FIX END ===
+
+    # 1. Calculate Magnitude
+    mag, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+    
+    # 2. Accumulate (Memory)
+    # Take the MAX of current motion vs decayed history
+    state["flow_acc"] = np.maximum(mag, state["flow_acc"] * decay)
+    
+    # 3. Threshold
+    _, mask = cv2.threshold(state["flow_acc"], threshold, 255, cv2.THRESH_BINARY)
+    mask = mask.astype(np.uint8)
+
+    # 4. Clean up noise (Morphology)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    mask = cv2.dilate(mask, kernel, iterations=1)
+
+    return mask
+
+
+
+
 def main():
-    window_name = "Optical Flow Experience"
+    window_name = "Optical Flow Study"
     debug_overlay = DEBUG_OVERLAY
 
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
@@ -496,77 +582,107 @@ def main():
         "fluid_canvas": np.zeros((h0, w0, 3), dtype=np.float32),
         "trail_acc": None,
         "long_trail_acc": None,
-        "bg_base": None,   # <- MODELO DE BACKGROUND (capturado com tecla 'b')
+        "bg_base": None,        # Static Model
+        "flow_acc": None,       # Motion Model
+        "use_flow_mask": False  # Toggle: False=Static, True=OpticalFlow
     }
     state["hsv"][..., 1] = 255
 
     # Lista de Efeitos
     effects = [
         ("SHOW_MASK", effect_show_mask, EFFECT_SECONDS),
-        ("FLUID_PAINT_BG", effect_fluid_paint_bg_only, EFFECT_SECONDS),  # <- MODIFICADO
-#        ("GRID_WARP", effect_grid_warp, EFFECT_SECONDS),
+        ("FLUID_PAINT_BG", effect_fluid_paint_bg_only, 30), # Increased duration for testing
         ("ARROWS", effect_simple_arrows, 15),
-        # Descomente se quiser:
-        # ("MOTION_TRAIL", effect_motion_trail, EFFECT_SECONDS),
-        # ("LONG_TRAIL", effect_long_trail, EFFECT_SECONDS),
-        # ("CLEAN_FLOW", effect_flow_color_polished, EFFECT_SECONDS),
-        # ("FLUID_PAINT", effect_fluid_paint, EFFECT_SECONDS),
     ]
 
     idx = 0
     effect_start = time.time()
-
     gray_prev = cv2.cvtColor(frame0, cv2.COLOR_BGR2GRAY)
+
+    print("=== CONTROLS ===")
+    print(" 'm' : Toggle Mask Method (Static vs. Optical Flow)")
+    print(" 'b' : Capture Static Background (step out first!)")
+    print(" 'd' : Toggle HUD")
+    print(" 'q' : Quit")
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Espelhar para sensação mais natural (opcional)
+        # 1. Pre-process
         frame = cv2.flip(frame, 1)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+        # 2. Calculate Flow (Essential for everything)
+        flow = calculate_smooth_flow(gray_prev, gray)
 
         now = time.time()
         elapsed = now - effect_start
-
         name, func, duration = effects[idx]
         remaining = max(0, duration - elapsed)
 
         if elapsed >= duration:
             idx = (idx + 1) % len(effects)
             effect_start = now
-
-            # Reset states ao trocar (opcional)
-            state["fluid_canvas"] = np.zeros((h0, w0, 3), dtype=np.float32)
+            # Reset visual accumulators (not models)
+            state["fluid_canvas"][:] = 0
             state["trail_acc"] = None
-            state["long_trail_acc"] = None
 
-        # Executa efeito
+        # =========================================
+        # STUDIED LOGIC: Generate the Mask
+        # =========================================
+        active_mask = None
+        method_name = ""
+
+        if state["use_flow_mask"]:
+            # METHOD B: Optical Flow
+            active_mask = make_mask_from_flow_robust(flow, state, threshold=NOISE_THRESHOLD)
+            method_name = "METHOD: Optical Flow (Motion)"
+            
+            # Update state with this mask so effects can use it
+            # We "hack" the bg_base logic by passing the mask directly if needed, 
+            # but for FLUID_PAINT_BG we need to ensure it uses this mask.
+            # *Note: standard FLUID_PAINT_BG in your code calculates its own mask from bg_base.
+            # For this study, we are just visualizing the difference mostly.*
+        else:
+            # METHOD A: Static Background
+            if state["bg_base"] is not None:
+                active_mask = make_foreground_mask(frame, state["bg_base"])
+                method_name = "METHOD: Static BG Subtraction"
+            else:
+                active_mask = np.zeros_like(gray)
+                method_name = "METHOD: Static (No BG captured)"
+                
+
+        state["active_mask"] = active_mask
+
+        # =========================================
+        # Render Effect
+        # =========================================
         try:
-            out = func(frame, gray_prev, gray, state)
+            # If we are in SHOW_MASK mode, we force the display of our ACTIVE mask
+            if name == "SHOW_MASK":
+                out = cv2.cvtColor(active_mask, cv2.COLOR_GRAY2BGR)
+            else:
+                out = func(frame, gray_prev, gray, state)
         except Exception as e:
             print(f"Erro no efeito {name}: {e}")
             out = frame
 
+        # Overlay the active mask in the corner (Red) for comparison
+        if debug_overlay:
+            overlay_mask_debug(out, active_mask)
+
         # HUD
-        extra_info = "Usando Optical Flow Farneback Suavizado"
-        if name == "FLUID_PAINT_BG":
-            if state["bg_base"] is None:
-                extra_info = "Pressione 'b' p/ capturar FUNDO (sem pessoa)"
-            else:
-                extra_info = "FG recortado por BG-subtraction | BG com adveccao"
-        elif name == "GRID_WARP":
-            extra_info = "Wireframe deformado pelo fluxo"
-        elif name == "ARROWS":
-            extra_info = "Setas do fluxo (debug)"
-
-        overlay_hud(out, name, remaining, extra_info, debug=debug_overlay)
+        overlay_hud(out, name, remaining, method_name, debug=debug_overlay)
+        
         cv2.imshow(window_name, out)
-
         gray_prev = gray.copy()
 
-        # Controles
+        # =========================================
+        # Inputs
+        # =========================================
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q') or key == 27:
             break
@@ -575,28 +691,19 @@ def main():
         elif key == ord('n'):
             idx = (idx + 1) % len(effects)
             effect_start = time.time()
-            state["fluid_canvas"][:] = 0
-            state["trail_acc"] = None
-            state["long_trail_acc"] = None
-        elif key == ord('p'):
-            idx = (idx - 1) % len(effects)
-            effect_start = time.time()
-            state["fluid_canvas"][:] = 0
-            state["trail_acc"] = None
-            state["long_trail_acc"] = None
-        elif key == ord('r'):
-            state["fluid_canvas"][:] = 0
-            state["trail_acc"] = None
-            state["long_trail_acc"] = None
+        elif key == ord('m'):
+            # THE SWITCH
+            state["use_flow_mask"] = not state["use_flow_mask"]
+            print(f"Switched Method. Flow Mode: {state['use_flow_mask']}")
         elif key == ord('b'):
-            bg = capture_background_average(cap, num_frames=150, settle_ms=400)
+            print("Capturing background in 3 seconds...")
+            bg = capture_background_average(cap, num_frames=100, settle_ms=1000)
             if bg is not None:
                 state["bg_base"] = bg
-                print("Background capturado por média (bg_base).")
+                print("Background Captured!")
             else:
-                print("Falha ao capturar background.")
+                print("Capture failed.")
 
-            
     cap.release()
     cv2.destroyAllWindows()
 
