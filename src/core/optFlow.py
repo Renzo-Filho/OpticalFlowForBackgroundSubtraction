@@ -10,9 +10,12 @@ class OpticalFlowEngine:
         # Initialize DIS (Fastest advanced CPU method)
         self.dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_FAST)
         
-        # Initialize TV-L1 (High quality variational method)
-        # Note: This is slower, so we use a higher downscale usually
-        self.tvl1 = cv2.optflow.createOptFlow_DualTVL1()
+        self.tvl1 = None
+        if hasattr(cv2, 'optflow'):
+            self.tvl1 = cv2.optflow.createOptFlow_DualTVL1()
+            self.tvl1.setInnerIterations(5)  
+            self.tvl1.setOuterIterations(2)
+            self.tvl1.setTau(0.15)
 
     def set_method(self, method_name):
         """Allows swapping methods via keyboard during exhibition"""

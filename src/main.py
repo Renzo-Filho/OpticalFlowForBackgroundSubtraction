@@ -8,6 +8,7 @@ from effects.fluidPaint import FluidPaintEffect
 from effects.debug import ShowMaskEffect
 from effects.trails import MotionTrailEffect
 from utils.hud import HUD
+from utils.benchmarker import FlowBenchmarker
 
 class ExhibitionApp:
     def __init__(self):
@@ -49,6 +50,9 @@ class ExhibitionApp:
         self.flow_idx = 0
         self.flow_engine = OpticalFlowEngine(method=self.flow_methods[self.flow_idx])
 
+        # 6. Benchmark
+        self.benchmarker = FlowBenchmarker("../data/csv/exhibition_data.csv", sample_interval=0.5)
+
     def run(self):
         while True:
             ret, frame = self.cap.read()
@@ -56,8 +60,14 @@ class ExhibitionApp:
             frame = cv2.flip(frame, 1) # Mirror view
             
             # --- Processing ---
+            t0 = time.time()
             flow = self.flow_engine.update(frame)
+            t1 = time.time()
+            
             mask = self.bg_processor.get_mask(frame, flow)
+
+            latency = (t1 - t0) * 1000
+            self.benchmarker.log(self.flow_engine.method, flow, latency)
             
             # --- Auto Rotation ---
             elapsed = time.time() - self.start_time
