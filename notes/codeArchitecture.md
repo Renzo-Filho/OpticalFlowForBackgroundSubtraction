@@ -107,3 +107,58 @@ To avoid overwhelming you, I suggest we build this in **3 Stages**:
 * **Stage 1: The Foundation.** Create the `BaseEffect` class and the `OpticalFlowEngine`. Move the math out of the main loop.
 * **Stage 2: The Logic.** Implement the `BackgroundProcessor` to cleanly swap between your "Static" and "Flow" masking methods.
 * **Stage 3: The Polish.** Port the "Fluid" and "Trails" effects into the new class structure and build the final `main.py`.
+
+---
+
+# Migration Step-by-step
+
+
+To help you navigate your new project, here is a "migration map" showing exactly where each piece of logic from your original `backSubtr.py` script now resides in the OOP architecture.
+
+---
+
+### **1. Core Logic & Math Migration**
+
+The mathematical "brains" of your project were separated to improve stability and performance.
+
+| Feature in `backSubtr.py` | New OOP Location | Why? |
+| --- | --- | --- |
+| `calculate_smooth_flow` | `core/motion.py`  `OpticalFlowEngine` | Encapsulates flow history (`prev_gray`) and scaling parameters. |
+| `capture_background_average` | `core/background.py`  `BackgroundProcessor` | Isolates the "Static BG" model from the main application loop. |
+| `make_foreground_mask` | `core/background.py`  `_mask_from_static` | Keeps the YCrCb weighted scoring and Otsu thresholding in one logic engine. |
+| `make_mask_from_flow_robust` | `core/background.py`  `_mask_from_flow` | Handles the "decay" math that prevents users from disappearing when standing still. |
+| Morphological steps (Open/Close) | `core/background.py`  `_post_process` | Centralizes the 3-step cleaning process for all masking methods. |
+
+---
+
+### **2. Visual Effects Migration**
+
+Instead of a massive `state` dictionary and individual functions, each effect is now a self-contained "plugin" class.
+
+* **`effect_fluid_paint_bg_only`**  **`effects/fluid.py`**: Owns its own `fluid_canvas`. The advection math () is isolated here.
+* **`effect_grid_warp`**  **`effects/geometry.py`**: Now uses class attributes for `step` and `amplitude`, allowing multiple grid types.
+* **`effect_simple_arrows`**  **`effects/geometry.py`**: Refactored into a class that handles its own noise thresholds.
+* **`effect_motion_trail`**  **`effects/trails.py`**: The `trail_acc` variable is now an internal class property, cleared automatically by `reset()`.
+
+---
+
+### **3. Application & UI Migration**
+
+The "orchestration" logic—managing the camera and keys—was moved to a central manager.
+
+* **`overlay_hud`**  **`utils/hud.py`**: Automates text positioning and color themes, cleaning up the main loop.
+* **The Shared `state` Dict**  **Distributed**:
+* `bg_base` and `flow_acc`  `BackgroundProcessor`.
+* `hsv` and `prev_gray`  `OpticalFlowEngine`.
+* `active_mask`  Passed dynamically in the `main.py` loop.
+
+
+* **The `while True` Loop**  **`main.py`**: The `ExhibitionApp` class handles the lifecycle, from `cap.read()` to `cv2.destroyAllWindows()`.
+
+---
+
+### **4. Summary of Improvements**
+
+1. **State Isolation**: You no longer have to worry about `fluid_canvas` accidentally interfering with `trail_acc`.
+2. **Modularity**: Adding a new "Funny Effect" now only requires creating one new file and adding it to the list in `main.py`.
+3. **Academic Clarity**: Your study of "Static vs. Flow" masking is now clearly isolated in the `BackgroundProcessor`, making it easier to present for your project.
