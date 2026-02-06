@@ -2,43 +2,54 @@ import cv2
 import numpy as np
 
 class OpticalFlowEngine:
-    def __init__(self, scale=0.5, blur_k=(15, 15)):
+    def __init__(self, method="DIS", scale=0.25):
         self.scale = scale
-        self.blur_k = blur_k
         self.prev_gray = None
+        self.method = method.upper()
+        
+        # Initialize DIS (Fastest advanced CPU method)
+        self.dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_FAST)
+        
+        # Initialize TV-L1 (High quality variational method)
+        # Note: This is slower, so we use a higher downscale usually
+        self.tvl1 = cv2.optflow.createOptFlow_DualTVL1()
+
+    def set_method(self, method_name):
+        """Allows swapping methods via keyboard during exhibition"""
+        self.method = method_name.upper()
+        self.prev_gray = None # Clear history to avoid dimension mismatch
 
     def update(self, frame_bgr):
-        """
-        Processes a new frame and returns the flow vectors.
-        """
-        # Convert to grayscale
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
         
-        # Initialize if it's the first frame
         if self.prev_gray is None:
             self.prev_gray = gray
-            h, w = gray.shape
-            return np.zeros((h, w, 2), dtype=np.float32)
+            return np.zeros((gray.shape[0], gray.shape[1], 2), dtype=np.float32)
 
-        # 1. Downscale for performance
+        # 1. Downscale for real-time performance
         prev_small = cv2.resize(self.prev_gray, None, fx=self.scale, fy=self.scale)
         curr_small = cv2.resize(gray, None, fx=self.scale, fy=self.scale)
 
-        # 2. Calculate Farneback Flow
-        flow_small = cv2.calcOpticalFlowFarneback(
-            prev_small, curr_small, None, 
-            0.5, 3, 15, 3, 5, 1.2, 0
-        )
+        # 2. Dispatch to selected Algorithm
+        if self.method == "DIS":
+            flow_small = self.dis.calc(prev_small, curr_small, None)
+        
+        elif self.method == "TVL1":
+            flow_small = self.tvl1.calc(prev_small, curr_small, None)
+            
+        else: # Default: Farneback (from your backSubtr.py)
+            flow_small = cv2.calcOpticalFlowFarneback(
+                prev_small, curr_small, None, 
+                0.5, 3, 15, 3, 5, 1.2, 0
+            )
 
-        # 3. Spatial Smoothing (Blur)
-        flow_small = cv2.GaussianBlur(flow_small, self.blur_k, 5.0)
+        # 3. Post-Process (Blur for consistency)
+        flow_small = cv2.GaussianBlur(flow_small, (15, 15), 5.0)
 
         # 4. Upscale back to original resolution
         h, w = gray.shape
         flow = cv2.resize(flow_small, (w, h))
         flow *= (1.0 / self.scale)
 
-        # Store for next iteration
         self.prev_gray = gray.copy()
-        
         return flow

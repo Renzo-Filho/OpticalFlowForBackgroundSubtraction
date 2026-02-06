@@ -44,6 +44,11 @@ class ExhibitionApp:
         # You can change (1280, 720) to (1920, 1080) if you have a Full HD screen
         cv2.resizeWindow(self.window_name, 1280, 720)
 
+        # 5. Optical Flow Setup
+        self.flow_methods = ["DIS", "TVL1", "FARNEBACK"]
+        self.flow_idx = 0
+        self.flow_engine = OpticalFlowEngine(method=self.flow_methods[self.flow_idx])
+
     def run(self):
         while True:
             ret, frame = self.cap.read()
@@ -69,18 +74,25 @@ class ExhibitionApp:
                 output = frame
 
             # --- HUD & Status Logic ---
-            status_msg = ""
-            if not self.bg_processor.use_flow_mask and self.bg_processor.bg_base is None:
-                status_msg = "No BG captured (Press 'b')"
+            is_flow_mode = self.bg_processor.use_flow_mask      # Determine the mode label
+            method_label = "MODE: " + ("Motion (Flow)" if is_flow_mode else "Static")
 
-            method_label = "MODE: " + ("Motion (Flow)" if self.bg_processor.use_flow_mask else "Static (Subtr)")
-            
+            status_parts = []
+            # Only show the Engine if we are in Flow Mode
+            if is_flow_mode:
+                status_parts.append(f"ENGINE: {self.flow_engine.method}")
+
+            # Always show the background warning if it's missing
+            if not is_flow_mode and self.bg_processor.bg_base is None:
+                status_parts.append("No BG captured (Press 'b')")
+
+            full_status = " | ".join(status_parts)
             self.hud.render(
                 output, 
                 current_effect.name, 
                 method_label, 
                 remaining_time=(self.effect_duration - elapsed),
-                extra_info=status_msg
+                extra_info=full_status
             )
 
             cv2.imshow(self.window_name, output)
@@ -103,7 +115,15 @@ class ExhibitionApp:
         elif key == ord('b'): self.bg_processor.capture_static_model(self.cap)
         elif key == ord('d'): self.hud.toggle()
         elif key == ord('r'): self.effects[self.current_idx].reset()
+        if key == ord('o'): # Cycle Optical Flow Engines
+            self.flow_idx = (self.flow_idx + 1) % len(self.flow_methods)
+            new_method = self.flow_methods[self.flow_idx]
+            self.flow_engine.set_method(new_method)
+            print(f"Switched Flow Engine to: {new_method}")
+
         return False
+    
+    
 
     def cleanup(self):
         self.cap.release()
