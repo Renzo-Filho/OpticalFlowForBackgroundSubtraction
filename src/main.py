@@ -8,7 +8,8 @@ from effects.fluid import FluidPaintEffect
 from effects.debug import ShowMaskEffect
 from effects.trails import MotionTrailEffect
 from effects.clones import SolidCloneEffect
-from effects.timeTunnel import TimeTunnelEffect
+from effects.timeTunnel import TimeTunnelEffect, DrosteTunnelEffect
+from effects.filters import CartoonEffect, HeatmapEffect, NegativeEffect
 from utils.hud import HUD
 from utils.benchmarker import FlowBenchmarker
 
@@ -25,8 +26,13 @@ class ExhibitionApp:
         
         # 3. Effects Playlist
         self.effects = [
+            HeatmapEffect(),     # Adds a colorful, thermal-camera vibe
+            CartoonEffect(),     # Adds a comic-book aesthetic
+            NegativeEffect(),    # Classic high-contrast look
             TimeTunnelEffect(max_clones=10, frame_delay=15),
             SolidCloneEffect(max_clones=4, frame_delay=8),
+            DrosteTunnelEffect(scale_factor=0.94), # Faster recession
+            DrosteTunnelEffect(scale_factor=0.98), # Slow, hypnotic recession
             ShowMaskEffect(),
             FluidPaintEffect(decay=0.985),
             GridWarpEffect(step=40, amplitude=3.0),
