@@ -4,7 +4,7 @@ import numpy as np
 from core.optFlow import OpticalFlowEngine
 from core.background import BackgroundProcessor
 from effects.geometry import ArrowEffect, GridWarpEffect
-from effects.fluidPaint import FluidPaintEffect
+from effects.fluid import FluidPaintEffect
 from effects.debug import ShowMaskEffect
 from effects.trails import MotionTrailEffect
 from utils.hud import HUD
