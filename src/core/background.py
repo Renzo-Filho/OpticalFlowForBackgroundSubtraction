@@ -66,7 +66,7 @@ class BackgroundProcessor:
 
         # 2. Weighted Score Port
         # Y=0.5, Cr=1.0, Cb=1.0
-        score = 0.5 * diff[..., 0] + 1.0 * diff[..., 1] + 1.0 * diff[..., 2]
+        score = 0.3 * diff[..., 0] + 1.2 * diff[..., 1] + 1.2 * diff[..., 2]
         score_u8 = np.clip(score, 0, 255).astype(np.uint8)
 
         # 3. Otsu Thresholding
@@ -94,33 +94,39 @@ class BackgroundProcessor:
    
     def _post_process(self, mask):
         """
-        Enhanced post-processing with Connected Component Analysis (CCA) 
-        to isolate the largest object (the person).
+        Advanced morphological reconstruction to fix 'missing limbs'.
+        Strategy: Bridge Gaps -> Find Contours -> Fill Hulls.
         """
-        # 1. Standard cleaning to remove tiny noise spikes
-        kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (self.SMALL_K_SIZE, self.SMALL_K_SIZE))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_small, iterations=1)
+        h, w = mask.shape[:2]
 
-        # 2. Find all connected components
-        # labels: a map of the same size as mask where each blob has a unique integer ID
-        # stats: a table containing [left, top, width, height, area] for each ID
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        # 1. Morphological Closing (The "Bridge")
+        # Connects disjoint parts (e.g., hand separated from wrist)
+        # We use a rectangular kernel here as it bridges gaps better than ellipses
+        kernel_bridge = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_bridge, iterations=2)
 
-        if num_labels > 1:
-            # stats[0] is always the background, so we ignore it and find the max area in the rest
-            # The index of the largest component (excluding index 0)
-            largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-            
-            # Create a new mask containing ONLY the largest component
-            mask = np.zeros_like(mask)
-            mask[labels == largest_label] = 255
-        else:
-            # If no components were found (empty mask), return zeros
-            return np.zeros_like(mask)
-
-        # 3. Final Polish: Fill holes and smooth edges of the selected 'Person' blob
-        kernel_big = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (self.BIG_K_SIZE, self.BIG_K_SIZE))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_big, iterations=2)
-        mask = cv2.dilate(mask, kernel_big, iterations=1)
+        # 2. Find Contours (External only - we don't care about holes inside yet)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        return cv2.GaussianBlur(mask, (11, 11), 0)
+        # 3. Smart Filling (The "Solid Silhouette")
+        # Create a clean new mask to draw on
+        filled_mask = np.zeros_like(mask)
+        
+        if contours:
+            # Sort contours by area (largest first)
+            contours = sorted(contours, key=cv2.contourArea, reverse=True)
+            
+            # Keep the top N largest blobs (e.g., 2 people max)
+            # This filters out small noise automatically
+            for cnt in contours[:2]:
+                if cv2.contourArea(cnt) > 500: # Minimum size threshold
+                    # Option A: Draw the filled contour (Exact shape)
+                    cv2.drawContours(filled_mask, [cnt], -1, 255, thickness=cv2.FILLED)
+                    
+                    # Option B (Optional): Convex Hull
+                    # If you still have gaps, uncomment this to wrap a "shrink wrap" around the person
+                    # hull = cv2.convexHull(cnt)
+                    # cv2.drawContours(filled_mask, [hull], -1, 255, thickness=cv2.FILLED)
+
+        # 4. Final Smoothing (Anti-alias the edges)
+        return cv2.GaussianBlur(filled_mask, (11, 11), 0)

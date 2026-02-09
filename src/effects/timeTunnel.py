@@ -61,3 +61,43 @@ class TimeTunnelEffect(BaseEffect):
 
     def reset(self):
         self.buffer.clear()
+
+class DrosteTunnelEffect(BaseEffect):
+    def __init__(self, scale_factor=0.95, zoom_speed=2):
+        """
+        :param scale_factor: How much each 'step' shrinks (0.9 to 0.99).
+        :param zoom_speed: How many pixels the tunnel shifts per frame.
+        """
+        super().__init__("DROSTE_TUNNEL")
+        self.scale_factor = scale_factor
+        self.canvas = None
+
+    def apply(self, frame, flow, mask, pose_results=None):
+        h, w = frame.shape[:2]
+        
+        # 1. Initialize black canvas if needed
+        if self.canvas is None:
+            self.canvas = np.zeros_like(frame)
+
+        # 2. Transform the History (The Recursive Step)
+        # We shrink the current canvas toward the center
+        new_w, new_h = int(w * self.scale_factor), int(h * self.scale_factor)
+        shrunk = cv2.resize(self.canvas, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        
+        # Re-center the shrunk image on a black background
+        self.canvas = np.zeros_like(frame)
+        y_off = (h - new_h) // 2
+        x_off = (w - new_w) // 2
+        self.canvas[y_off:y_off+new_h, x_off:x_off+new_w] = shrunk
+
+        # 3. Apply Subtle Blur to the background to simulate depth
+        self.canvas = cv2.GaussianBlur(self.canvas, (3, 3), 0)
+
+        # 4. Draw the 'Present' Person on top
+        # Using the cleaned mask from your BackgroundProcessor (largest component)
+        cv2.copyTo(frame, mask, self.canvas)
+        
+        return self.canvas
+
+    def reset(self):
+        self.canvas = None
