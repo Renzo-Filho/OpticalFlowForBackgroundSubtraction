@@ -91,21 +91,36 @@ class BackgroundProcessor:
         
         _, mask = cv2.threshold(self.flow_acc, self.NOISE_THRESHOLD, 255, cv2.THRESH_BINARY)
         return self._post_process(mask.astype(np.uint8))
-
+   
     def _post_process(self, mask):
         """
-        The 3-step morphology ported from your script.
-        Opening -> Closing -> Dilation.
+        Enhanced post-processing with Connected Component Analysis (CCA) 
+        to isolate the largest object (the person).
         """
-        big_k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (self.BIG_K_SIZE, self.BIG_K_SIZE))
-        small_k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (self.SMALL_K_SIZE, self.SMALL_K_SIZE))
+        # 1. Standard cleaning to remove tiny noise spikes
+        kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (self.SMALL_K_SIZE, self.SMALL_K_SIZE))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_small, iterations=1)
 
-        # 1) Opening (remove noise)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, small_k, iterations=1)
-        # 2) Closing (fill holes in person)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, big_k, iterations=2)
-        # 3) Dilation (expand foreground)
-        mask = cv2.dilate(mask, big_k, iterations=2)
+        # 2. Find all connected components
+        # labels: a map of the same size as mask where each blob has a unique integer ID
+        # stats: a table containing [left, top, width, height, area] for each ID
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
 
-        # Smooth edges
+        if num_labels > 1:
+            # stats[0] is always the background, so we ignore it and find the max area in the rest
+            # The index of the largest component (excluding index 0)
+            largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+            
+            # Create a new mask containing ONLY the largest component
+            mask = np.zeros_like(mask)
+            mask[labels == largest_label] = 255
+        else:
+            # If no components were found (empty mask), return zeros
+            return np.zeros_like(mask)
+
+        # 3. Final Polish: Fill holes and smooth edges of the selected 'Person' blob
+        kernel_big = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (self.BIG_K_SIZE, self.BIG_K_SIZE))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_big, iterations=2)
+        mask = cv2.dilate(mask, kernel_big, iterations=1)
+        
         return cv2.GaussianBlur(mask, (11, 11), 0)

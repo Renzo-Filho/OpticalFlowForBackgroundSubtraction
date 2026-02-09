@@ -7,6 +7,8 @@ from effects.geometry import ArrowEffect, GridWarpEffect
 from effects.fluid import FluidPaintEffect
 from effects.debug import ShowMaskEffect
 from effects.trails import MotionTrailEffect
+from effects.clones import SolidCloneEffect
+from effects.timeTunnel import TimeTunnelEffect
 from utils.hud import HUD
 from utils.benchmarker import FlowBenchmarker
 
@@ -23,6 +25,8 @@ class ExhibitionApp:
         
         # 3. Effects Playlist
         self.effects = [
+            TimeTunnelEffect(max_clones=10, frame_delay=15),
+            SolidCloneEffect(max_clones=4, frame_delay=8),
             ShowMaskEffect(),
             FluidPaintEffect(decay=0.985),
             GridWarpEffect(step=40, amplitude=3.0),
