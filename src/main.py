@@ -17,7 +17,7 @@ from utils.benchmarker import FlowBenchmarker
 class ExhibitionApp:
     def __init__(self):
         # 1. Initialize Camera
-        self.cap = cv2.VideoCapture(4)
+        self.cap = cv2.VideoCapture(4) # FIXME
         ret, frame = self.cap.read()
         if not ret: raise RuntimeError("Could not initialize camera.")
         
@@ -34,7 +34,7 @@ class ExhibitionApp:
             #SolidCloneEffect(max_clones=4, frame_delay=8),
             #DrosteTunnelEffect(scale_factor=0.94), # Faster recession
             DrosteTunnelEffect(scale_factor=0.98), # Slow, hypnotic recession
-            #ShowMaskEffect(),
+            ShowMaskEffect(),
             FluidPaintEffect(decay=0.985),
             GridWarpEffect(step=40, amplitude=10.0),
             #MotionTrailEffect(trail_length=0.95),

@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import time
+from scipy import ndimage
 
 class BackgroundProcessor:
     def __init__(self):
@@ -92,41 +93,53 @@ class BackgroundProcessor:
         _, mask = cv2.threshold(self.flow_acc, self.NOISE_THRESHOLD, 255, cv2.THRESH_BINARY)
         return self._post_process(mask.astype(np.uint8))
    
-    def _post_process(self, mask):
-        """
-        Advanced morphological reconstruction to fix 'missing limbs'.
-        Strategy: Bridge Gaps -> Find Contours -> Fill Hulls.
-        """
-        h, w = mask.shape[:2]
 
-        # 1. Morphological Closing (The "Bridge")
-        # Connects disjoint parts (e.g., hand separated from wrist)
-        # We use a rectangular kernel here as it bridges gaps better than ellipses
-        kernel_bridge = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_bridge, iterations=2)
+    def _post_process(self, mask, min_area_threshold=1000):
+            """
+            Advanced morphological reconstruction to fix 'missing limbs'.
+            Strategy: Bridge Gaps -> Filter by Bottom Edge & Min Area -> Fill Holes.
+            """
+            h, w = mask.shape[:2]
 
-        # 2. Find Contours (External only - we don't care about holes inside yet)
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # 3. Smart Filling (The "Solid Silhouette")
-        # Create a clean new mask to draw on
-        filled_mask = np.zeros_like(mask)
-        
-        if contours:
-            # Sort contours by area (largest first)
-            contours = sorted(contours, key=cv2.contourArea, reverse=True)
+            # 1. Morphological Closing (The "Bridge")
+            kernel_bridge = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_bridge, iterations=2)
+
+            # 2. Find connected components and their stats
+            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
             
-            # Keep the top N largest blobs (e.g., 2 people max)
-            # This filters out small noise automatically
-            for cnt in contours[:2]:
-                if cv2.contourArea(cnt) > 500: # Minimum size threshold
-                    # Option A: Draw the filled contour (Exact shape)
-                    cv2.drawContours(filled_mask, [cnt], -1, 255, thickness=cv2.FILLED)
-                    
-                    # Option B (Optional): Convex Hull
-                    # If you still have gaps, uncomment this to wrap a "shrink wrap" around the person
-                    # hull = cv2.convexHull(cnt)
-                    # cv2.drawContours(filled_mask, [hull], -1, 255, thickness=cv2.FILLED)
+            # 3. Identify component IDs touching bottom and top borders
+            bottom_labels = set(np.unique(labels[h - 1, :])) - {0}
+            top_labels = set(np.unique(labels[0, :])) - {0}
+            
+            # Keep only labels that touch bottom but NOT top
+            valid_labels = bottom_labels - top_labels
+            
+            # 4. Filter components by minimum area
+            area_filtered_labels = []
+            for label in valid_labels:
+                area = stats[label, cv2.CC_STAT_AREA]
+                if area >= min_area_threshold:
+                    area_filtered_labels.append(label)
+            
+            # 5. Build the filtered mask
+            filtered_mask = np.zeros_like(mask)
+            if len(valid_labels) > 0:
+                filtered_mask[np.isin(labels, valid_labels)] = 255
+                
+            # 6. Tapar os buracos internos (Fill Holes)
+            # ndimage.binary_fill_holes retorna um array booleano (True/False).
+            # Convertendo de volta para 0 e 255 (padrão OpenCV) para evitar bugs nas próximas etapas
+            filtered_mask = ndimage.binary_fill_holes(filtered_mask).astype(np.uint8) * 255
 
-        # 4. Final Smoothing (Anti-alias the edges)
-        return cv2.GaussianBlur(filled_mask, (11, 11), 0)
+            # 7. Definir o kernel (elemento estruturante)
+            # O tamanho do kernel define o quão "grossa" será a dilatação a cada passo.
+            # MORPH_ELLIPSE costuma gerar bordas mais suaves do que MORPH_RECT para silhuetas humanas/orgânicas.
+            kernel_dilation = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+
+            # 8. Aplicar a dilatação
+            # O parâmetro 'iterations' controla quantas vezes a dilatação será repetida.
+            # Aumente o tamanho do kernel ou o número de iterações para expandir mais a máscara.
+            dilated_mask = cv2.dilate(filtered_mask, kernel_dilation, iterations=1)
+                    
+            return dilated_mask

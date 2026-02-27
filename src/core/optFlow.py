@@ -46,10 +46,26 @@ class OpticalFlowEngine:
                 0.5, 3, 15, 3, 5, 1.2, 0
             )
 
-        # 3. Post-Process (Blur for consistency)
-        flow_small = cv2.GaussianBlur(flow_small, (15, 15), 5.0)
+        # 1. Definir o limite mínimo de movimento (magnitude)
+        # Ajuste esse valor de acordo com a sensibilidade desejada
+        mag_threshold = 0.15 
 
-        # 4. Upscale back to original resolution
+        # 2. Separar os canais X e Y do fluxo
+        u = flow_small[..., 0]
+        v = flow_small[..., 1]
+
+        # 3. Calcular a magnitude do vetor de movimento para cada pixel
+        magnitude = np.hypot(u, v)
+
+        # 4. Zerar (eliminar) os vetores cuja magnitude for menor que o threshold
+        flow_small[magnitude < mag_threshold] = 0
+
+        flow_small = flow_small * 2
+
+        # 5. Aplicar a suavização Gaussiana apenas nos movimentos relevantes que restaram
+        #flow_small = cv2.GaussianBlur(flow_small, (15, 15), 5.0)
+
+        # 6. Upscale back to original resolution
         h, w = gray.shape
         flow = cv2.resize(flow_small, (w, h))
         flow *= (1.0 / self.scale)

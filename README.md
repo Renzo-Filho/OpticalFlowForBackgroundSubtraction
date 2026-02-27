@@ -132,4 +132,3 @@ The system automatically logs performance data to `data/csv/exhibition_data.csv`
 * **Energy:** Mean magnitude of motion vectors (Sensitivity).
 * **Sparsity (%):** Percentage of moving pixels (Noise detection).
 
-```
