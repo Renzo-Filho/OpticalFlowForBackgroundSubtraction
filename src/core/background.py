@@ -16,6 +16,10 @@ class BackgroundProcessor:
         self.NOISE_THRESHOLD = 2.0
         self.DECAY = 0.90
 
+        self.weight_y = 0.3
+        self.weight_cr = 1.2
+        self.weight_cb = 1.2
+
     def set_mode(self, use_flow):
         """Switches between Static BG and Optical Flow masking."""
         self.use_flow_mask = use_flow
@@ -68,7 +72,7 @@ class BackgroundProcessor:
 
         # 2. Weighted Score Port
         # Y=0.5, Cr=1.0, Cb=1.0
-        score = 0.3 * diff[..., 0] + 1.2 * diff[..., 1] + 1.2 * diff[..., 2]
+        score = (self.weight_y * diff[..., 0] + self.weight_cr * diff[..., 1] + self.weight_cb * diff[..., 2])
         score_u8 = np.clip(score, 0, 255).astype(np.uint8)
 
         # 3. Otsu Thresholding

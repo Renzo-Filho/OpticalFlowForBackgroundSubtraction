@@ -56,6 +56,10 @@ class ExhibitionApp:
         # You can change (1280, 720) to (1920, 1080) if you have a Full HD screen
         cv2.resizeWindow(self.window_name, 1280, 720)
 
+        cv2.createTrackbar("Peso Y", self.window_name, 30, 300, self.update_weights)
+        cv2.createTrackbar("Peso Cr", self.window_name, 120, 300, self.update_weights)
+        cv2.createTrackbar("Peso Cb", self.window_name, 120, 300, self.update_weights)
+
         # 5. Optical Flow Setup
         self.flow_methods = ["DIS", "TVL1", "FARNEBACK"]
         self.flow_idx = 0
@@ -168,6 +172,22 @@ class ExhibitionApp:
         # 3. Close GUI
         cv2.destroyAllWindows()
         print("Exhibition closed successfully.")
+
+    
+    def update_weights(self, val):
+        """Callback chamado sempre que um slider é movido pelo mouse."""
+        # Lê os valores atuais (0 a 300) da janela
+        y_val = cv2.getTrackbarPos("Peso Y", self.window_name)
+        cr_val = cv2.getTrackbarPos("Peso Cr", self.window_name)
+        cb_val = cv2.getTrackbarPos("Peso Cb", self.window_name)
+        
+        # Divide por 100 para voltar a ter casas decimais (ex: 120 vira 1.2)
+        # e atualiza o processador de background
+        self.bg_processor.weight_y = y_val / 100.0
+        self.bg_processor.weight_cr = cr_val / 100.0
+        self.bg_processor.weight_cb = cb_val / 100.0
+        
+        print(f"Pesos Atualizados -> Y: {self.bg_processor.weight_y}, Cr: {self.bg_processor.weight_cr}, Cb: {self.bg_processor.weight_cb}")
 
 # --- THE EXECUTION PART ---
 if __name__ == "__main__":
